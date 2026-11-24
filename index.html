@@ -316,7 +316,8 @@ class TimerEngine {
     showRecords: saved.prefs?.showRecords !== false
   };
   const names = { focusTime: '专注时间', shortBreak: '短休息', longBreak: '长休息' };
-  let audioContext, alarmInterval, alarmTimeout, alarmActive = false, editor = null, dragState = null;
+  let audioContext, woodBuffer, alarmInterval, alarmTimeout, alarmActive = false, editor = null, dragState = null;
+  const soundingNotes = new Set();
   function save() {
     try { localStorage.setItem(storageKey, JSON.stringify({ timer, prefs })); storageAvailable = true; }
     catch { storageAvailable = false; }
@@ -331,20 +332,33 @@ class TimerEngine {
   }
   function beep(volume = prefs.volume) {
     if (!audioContext || audioContext.state !== 'running' || volume <= 0) return;
+    if (!woodBuffer) {
+      const rate = audioContext.sampleRate;
+      woodBuffer = audioContext.createBuffer(1, Math.ceil(rate * .26), rate);
+      const samples = woodBuffer.getChannelData(0);
+      for (let sample = 0; sample < samples.length; sample++) {
+        const t = sample / rate;
+        const attack = 1 - Math.exp(-t / .0015);
+        const body = Math.sin(2 * Math.PI * 540 * t) * Math.exp(-t / .055);
+        const hollow = .45 * Math.sin(2 * Math.PI * 810 * t) * Math.exp(-t / .038);
+        const strike = .3 * Math.sin(2 * Math.PI * 1490 * t) * Math.exp(-t / .018);
+        samples[sample] = .38 * attack * (body + hollow + strike) * Math.min(1, (.26 - t) / .015);
+      }
+    }
     for (let i = 0; i < 3; i++) {
-      const oscillator = audioContext.createOscillator(), gain = audioContext.createGain();
-      const at = audioContext.currentTime + i * .24;
-      oscillator.frequency.value = 880;
-      gain.gain.setValueAtTime(0, at);
-      gain.gain.linearRampToValueAtTime(volume / 5 * .18, at + .015);
-      gain.gain.exponentialRampToValueAtTime(.001, at + .16);
-      oscillator.connect(gain); gain.connect(audioContext.destination);
-      oscillator.start(at); oscillator.stop(at + .18);
-      oscillator.onended = () => { oscillator.disconnect(); gain.disconnect(); };
+      const note = audioContext.createBufferSource(), gain = audioContext.createGain();
+      note.buffer = woodBuffer;
+      gain.gain.value = volume / 5;
+      note.connect(gain); gain.connect(audioContext.destination);
+      soundingNotes.add(note);
+      note.onended = () => { soundingNotes.delete(note); note.disconnect(); gain.disconnect(); };
+      note.start(audioContext.currentTime + i * .22);
     }
   }
   function stopAlarm() {
     clearInterval(alarmInterval); clearTimeout(alarmTimeout); alarmActive = false;
+    for (const note of soundingNotes) { try { note.stop(); } catch {} }
+    soundingNotes.clear();
   }
   function alarm() {
     stopAlarm();
