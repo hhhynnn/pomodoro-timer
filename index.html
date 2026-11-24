@@ -312,7 +312,9 @@ class TimerEngine {
     title: typeof saved.prefs?.title === 'string' ? saved.prefs.title.slice(0, 40) : '',
     dark: saved.prefs?.dark === true,
     volume: TimerEngine.bounded(saved.prefs?.volume, 0, 5, 3),
-    ringDuration: TimerEngine.bounded(saved.prefs?.ringDuration, 0, 60, 10),
+    // Apply the one-minute alarm once to existing installations, then retain later edits.
+    ringDuration: saved.prefs?.ringDurationVersion === 1 ? TimerEngine.bounded(saved.prefs?.ringDuration, 0, 60, 60) : 60,
+    ringDurationVersion: 1,
     showRecords: saved.prefs?.showRecords !== false
   };
   const names = { focusTime: '专注时间', shortBreak: '短休息', longBreak: '长休息' };
