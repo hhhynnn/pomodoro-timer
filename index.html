@@ -36,14 +36,16 @@
     .digit:hover, .digit:focus-visible { background: #ffffff16; }
     .digit.editing { visibility: hidden; }
     .colon { align-self: center; font: 118px/1 Tahoma, Arial, sans-serif; padding-bottom: 12px; pointer-events: none; }
+    .timer-sign { font: 96px/1 Tahoma, Arial, sans-serif; margin-right: 8px; pointer-events: none; }
     .digit-editor { position: absolute; inset: 0; width: 100%; border: 0; border-radius: 8px; background: #262626; color: white; font: 100px/1 Tahoma, Arial, sans-serif; text-align: center; appearance: textfield; }
     .digit-editor::-webkit-inner-spin-button { appearance: none; }
     .digit-step { position: absolute; left: 50%; transform: translateX(-50%); width: 52px; height: 26px; border: 0; border-radius: 5px; background: transparent; color: #bfc3ca; font-size: 18px; line-height: 1; }
     .digit-step:hover { background: #ffffff22; color: white; }
     .digit-step.up { top: -25px; }
     .digit-step.down { bottom: -25px; }
-    .timer.done .digit, .timer.done .colon { color: #ffbd59; }
+    .timer.done .digit, .timer.done .colon, .timer.done .timer-sign { color: #ffbd59; }
     .timer.long-time .digit { font-size: 112px; }
+    .timer.very-long-time .digit { font-size: 80px; }
     .edit-hint { text-align: center; color: var(--muted); font-size: 13px; margin: 12px 0 16px; line-height: 1.5; }
     .adjuster { display: flex; align-items: center; gap: 12px; }
     .adjuster label { white-space: nowrap; color: var(--muted); font-size: 14px; }
@@ -87,6 +89,8 @@
     html.fullscreen .timer { min-height: 32vh; }
     html.fullscreen .digit { font-size: clamp(112px, 16vw, 220px); }
     html.fullscreen .colon { font-size: clamp(100px, 15vw, 200px); }
+    html.fullscreen .timer-sign { font-size: clamp(80px, 12vw, 170px); }
+    html.fullscreen .timer.very-long-time .digit { font-size: clamp(64px, 10vw, 150px); }
     html.fullscreen .help { display: none; }
     @media (max-width: 575px) {
       main { padding-top: 24px; }
@@ -96,6 +100,8 @@
       .timer { min-height: 160px; padding: 30px 8px; border-radius: 12px; }
       .digit, html.fullscreen .digit { font-size: clamp(64px, 21vw, 112px); }
       .timer.long-time .digit, html.fullscreen .timer.long-time .digit { font-size: 17vw; }
+      .timer.very-long-time .digit, html.fullscreen .timer.very-long-time .digit { font-size: 11vw; }
+      .timer-sign, html.fullscreen .timer-sign { font-size: 14vw; margin-right: 2px; }
       .digit-editor { font-size: 17vw; }
       .colon, html.fullscreen .colon { font-size: 19vw; padding-bottom: 8px; }
       .digit-step { height: 28px; }
@@ -123,6 +129,7 @@
   <section id="timer-panel" role="tabpanel" aria-labelledby="focusTime">
     <div class="progress-track" role="progressbar" aria-label="本轮进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div class="progress-fill" id="progress"></div></div>
     <div class="timer" id="timer">
+      <span class="timer-sign" id="timer-sign" aria-hidden="true" hidden>−</span>
       <div class="digit-group">
         <button class="digit-step up" data-adjust="60" aria-label="增加一分钟">▴</button>
         <button class="digit" id="minutes" aria-label="修改分钟" aria-describedby="edit-hint" title="点击编辑；上下拖动或滚动鼠标调整分钟">25</button>
@@ -174,6 +181,7 @@
       <li>数字可点击编辑、上下拖动或滚轮调整，也可使用加减按钮、滑块及快捷时长。范围为 1 秒至 120 分钟。</li>
       <li>开始前修改会保存为该模式的默认时长；计时中或暂停时修改只改变本轮剩余时间。</li>
       <li>每完成 4 次专注，下一步进入长休息。切换模式会结束当前计时，已专注的时间仍计入合计。</li>
+      <li>到零后按设置提醒一次，并继续以负数显示超时时间，例如 −02:15 表示超时 2 分 15 秒。超时可以暂停或继续，也计入专注合计；每轮完成次数只记一次。</li>
       <li>重置会清空已完成次数和专注合计，并将当前倒计时恢复到设定时长；停止只结束当前计时，保留统计。</li>
       <li><kbd>空格</kbd> 开始／暂停／继续，<kbd>F</kbd> 全屏，<kbd>T</kbd> 夜间模式，<kbd>Shift</kbd> + <kbd>← / →</kbd> 切换模式。</li>
       <li>设置、记录与计时状态保存在当前浏览器。关闭页面后不会响铃，重新打开会按截止时间恢复；设备休眠时无法保证准时发声。</li>
@@ -207,31 +215,38 @@ class TimerEngine {
     this.durations = {};
     for (const mode of TimerEngine.modes) this.durations[mode] = Math.round(TimerEngine.bounded(saved.durations?.[mode], 1, 7200, TimerEngine.defaults[mode]));
     this.mode = TimerEngine.modes.includes(saved.mode) ? saved.mode : 'focusTime';
-    this.status = ['idle', 'running', 'paused', 'done'].includes(saved.status) ? saved.status : 'idle';
-    this.remainingMs = TimerEngine.bounded(saved.remainingMs, 0, 7200000, this.durations[this.mode] * 1000);
-    this.totalMs = TimerEngine.bounded(saved.totalMs, this.remainingMs, 1e12, this.remainingMs);
+    const legacyDone = saved.status === 'done';
+    this.status = legacyDone ? 'paused' : ['idle', 'running', 'paused'].includes(saved.status) ? saved.status : 'idle';
+    this.remainingMs = TimerEngine.bounded(saved.remainingMs, -1e15, 7200000, this.durations[this.mode] * 1000);
+    if (this.status === 'idle' && this.remainingMs <= 0) this.remainingMs = this.durations[this.mode] * 1000;
+    this.totalMs = TimerEngine.bounded(saved.totalMs, Math.max(0, this.remainingMs), 1e15, Math.max(0, this.remainingMs));
     this.focusMs = TimerEngine.bounded(saved.focusMs, 0, 1e15, 0);
     this.count = Math.floor(TimerEngine.bounded(saved.count, 0, 1e9, 0));
     this.deadline = Number.isFinite(saved.deadline) ? saved.deadline : null;
     this.checkpoint = Number.isFinite(saved.checkpoint) ? saved.checkpoint : null;
-    if (this.status === 'running' && (this.deadline === null || this.checkpoint === null || this.checkpoint > this.deadline)) this.status = 'paused';
+    // A completed round can keep running below zero, so its checkpoint may exceed the deadline.
+    this.roundCompleted = saved.roundCompleted === true || legacyDone;
+    if (this.status === 'running' && (this.deadline === null || this.checkpoint === null)) this.status = 'paused';
   }
   tick(now = Date.now()) {
     if (this.status !== 'running') return false;
-    const until = Math.min(now, this.deadline);
-    const elapsed = Math.max(0, until - this.checkpoint);
+    const until = Math.max(now, this.checkpoint);
+    const elapsed = until - this.checkpoint;
     if (this.mode === 'focusTime') this.focusMs += elapsed;
-    this.checkpoint = Math.max(this.checkpoint, until);
-    this.remainingMs = Math.max(0, this.deadline - now);
-    if (this.remainingMs > 0) return false;
-    this.status = 'done';
-    this.deadline = null;
+    this.checkpoint = until;
+    this.remainingMs = this.deadline - until;
+    if (this.remainingMs > 0 || this.roundCompleted) return false;
+    this.roundCompleted = true;
     if (this.mode === 'focusTime') this.count++;
     return true;
   }
+  display() {
+    const overtime = this.remainingMs < 0;
+    const seconds = overtime ? Math.floor(-this.remainingMs / 1000) : Math.ceil(this.remainingMs / 1000);
+    return { minutes: Math.floor(seconds / 60), seconds: seconds % 60, negative: overtime && seconds > 0 };
+  }
   start(now = Date.now()) {
     if (this.status === 'running') return;
-    if (this.remainingMs <= 0) this.reset(now);
     this.status = 'running';
     this.deadline = now + this.remainingMs;
     this.checkpoint = now;
@@ -249,6 +264,7 @@ class TimerEngine {
     this.totalMs = this.remainingMs;
     this.deadline = null;
     this.checkpoint = null;
+    this.roundCompleted = false;
   }
   resetAll(now = Date.now()) {
     this.reset(now);
@@ -268,13 +284,12 @@ class TimerEngine {
   setSeconds(seconds, now = Date.now()) {
     if (!Number.isFinite(seconds)) return;
     this.tick(now);
-    const next = Math.max(1, Math.min(7200, Math.round(seconds))) * 1000;
-    if (this.status === 'done') this.status = 'idle';
+    const next = Math.max(this.status === 'idle' ? 1 : -1e12, Math.min(7200, Math.round(seconds))) * 1000;
     if (this.status === 'idle') {
       this.durations[this.mode] = next / 1000;
       this.totalMs = next;
     } else {
-      this.totalMs = Math.max(next, this.totalMs + next - this.remainingMs);
+      this.totalMs = Math.max(0, next, this.totalMs + next - this.remainingMs);
     }
     this.remainingMs = next;
     if (this.status === 'running') { this.deadline = now + next; this.checkpoint = now; }
@@ -345,14 +360,18 @@ class TimerEngine {
     return [h ? h + ' 小时' : '', m ? m + ' 分' : '', (!h || s % 60) ? s % 60 + ' 秒' : ''].filter(Boolean).join(' ');
   }
   function render() {
-    const seconds = Math.ceil(timer.remainingMs / 1000), minutes = Math.floor(seconds / 60);
+    const { minutes, seconds, negative } = timer.display();
+    const expired = timer.remainingMs <= 0 && timer.status !== 'idle';
+    const timeLabel = `${minutes} 分 ${seconds} 秒`;
+    const overtimeLabel = `已超时 ${formatTotal(Math.max(0, -timer.remainingMs))}`;
+    $('timer-sign').hidden = !negative;
     $('minutes').textContent = String(minutes).padStart(2, '0');
-    $('seconds').textContent = String(seconds % 60).padStart(2, '0');
-    $('time-accessible').textContent = `${minutes} 分 ${seconds % 60} 秒`;
+    $('seconds').textContent = String(seconds).padStart(2, '0');
+    $('time-accessible').textContent = `${expired ? '超时 ' : ''}${timeLabel}`;
     document.body.dataset.mode = timer.mode;
     document.documentElement.classList.toggle('dark', prefs.dark);
     $('title').textContent = prefs.title || '番茄钟';
-    document.title = `${String(minutes).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')} · ${prefs.title || names[timer.mode]}`;
+    document.title = `${negative ? '−' : ''}${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')} · ${prefs.title || names[timer.mode]}`;
     document.querySelectorAll('.tab').forEach(tab => {
       const active = tab.dataset.mode === timer.mode;
       tab.setAttribute('aria-selected', active); tab.tabIndex = active ? 0 : -1;
@@ -361,23 +380,25 @@ class TimerEngine {
     const percent = Math.max(0, Math.min(100, timer.totalMs ? (1 - timer.remainingMs / timer.totalMs) * 100 : 0));
     $('progress').style.width = percent + '%';
     $('progress').parentElement.setAttribute('aria-valuenow', Math.round(percent));
-    $('timer').classList.toggle('done', timer.status === 'done');
+    $('timer').classList.toggle('done', expired);
     $('timer').classList.toggle('long-time', minutes >= 100);
+    $('timer').classList.toggle('very-long-time', minutes >= 1000);
     $('count').textContent = timer.count;
     $('total-focus').textContent = formatTotal(timer.focusMs);
     $('records').hidden = !prefs.showRecords;
-    $('start').textContent = { idle: '开始', running: '暂停', paused: '继续', done: '完成' }[timer.status];
+    $('start').textContent = { idle: '开始', running: '暂停', paused: '继续' }[timer.status];
     $('start').className = 'action' + (timer.status === 'running' ? ' pause' : timer.status === 'paused' ? ' resume' : '');
     $('stop').hidden = !['running', 'paused'].includes(timer.status);
     $('next').hidden = !['running', 'paused'].includes(timer.status);
+    $('next').textContent = timer.roundCompleted ? '完成' : '下一步';
     $('silence').hidden = !alarmActive;
     $('theme').textContent = prefs.dark ? '日间模式' : '夜间模式';
     $('theme').setAttribute('aria-pressed', prefs.dark);
-    $('duration-slider').value = Math.max(1, minutes);
-    $('duration-slider').setAttribute('aria-valuetext', `${minutes} 分 ${seconds % 60} 秒`);
-    $('slider-label').textContent = ['running', 'paused'].includes(timer.status) ? '剩余时长' : timer.mode === 'focusTime' ? '专注时长' : '休息时长';
-    document.querySelectorAll('.preset').forEach(button => button.setAttribute('aria-pressed', seconds === Number(button.dataset.minutes) * 60));
-    let status = { idle: '准备好，开始一段' + names[timer.mode], running: names[timer.mode] + '进行中 · 调时将修改本轮剩余时间', paused: '已暂停 · 调时将修改本轮剩余时间', done: names[timer.mode] + '结束，点击「完成」进入下一阶段' }[timer.status];
+    $('duration-slider').value = expired ? 1 : Math.max(1, minutes);
+    $('duration-slider').setAttribute('aria-valuetext', expired ? overtimeLabel : timeLabel);
+    $('slider-label').textContent = expired ? '调整时长' : ['running', 'paused'].includes(timer.status) ? '剩余时长' : timer.mode === 'focusTime' ? '专注时长' : '休息时长';
+    document.querySelectorAll('.preset').forEach(button => button.setAttribute('aria-pressed', !expired && minutes * 60 + seconds === Number(button.dataset.minutes) * 60));
+    let status = { idle: '准备好，开始一段' + names[timer.mode], running: expired ? `${overtimeLabel} · 可暂停或点击「完成」进入下一阶段` : names[timer.mode] + '进行中 · 调时将修改本轮剩余时间', paused: expired ? `已暂停 · ${overtimeLabel}` : '已暂停 · 调时将修改本轮剩余时间' }[timer.status];
     if (!storageAvailable) status += ' · 当前浏览器无法保存记录';
     if ($('status').textContent !== status) $('status').textContent = status;
   }
@@ -386,7 +407,6 @@ class TimerEngine {
     unlockAudio();
     change(() => {
       if (timer.status === 'running') timer.pause();
-      else if (timer.status === 'done') timer.next();
       else timer.start();
     });
   }
@@ -425,7 +445,7 @@ class TimerEngine {
   }
   function openEditor(part) {
     closeEditor(true); timer.tick();
-    const seconds = Math.ceil(timer.remainingMs / 1000);
+    const seconds = Math.max(0, Math.ceil(timer.remainingMs / 1000));
     editor = { part, seconds };
     const input = $(part + '-editor');
     input.value = part === 'minutes' ? Math.floor(seconds / 60) : seconds % 60;
