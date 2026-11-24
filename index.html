@@ -161,10 +161,9 @@
     </div>
     <div class="info" id="records"><span>已完成：<output id="count">0</output> 次专注</span><span>专注合计：<output id="total-focus">0 秒</output></span></div>
     <div class="actions">
-      <button class="action secondary" id="stop" hidden>停止</button>
+      <button class="action secondary" id="stop" title="结束当前计时并停止铃声，保留专注记录" hidden>结束本轮</button>
       <button class="action" id="start">开始</button>
-      <button class="action secondary" id="next" hidden>下一步</button>
-      <button class="action secondary" id="silence" hidden>静音</button>
+      <button class="action secondary" id="next" hidden>进入短休息</button>
     </div>
     <p class="status" id="status" role="status">准备好，开始一段专注时间</p>
     <div class="settings-bar">
@@ -180,10 +179,10 @@
     <ul>
       <li>数字可点击编辑、上下拖动或滚轮调整，也可使用加减按钮、滑块及快捷时长。范围为 1 秒至 120 分钟。</li>
       <li>开始前修改会保存为该模式的默认时长；计时中或暂停时修改只改变本轮剩余时间。</li>
-      <li>每完成 4 次专注，下一步进入长休息。切换模式会结束当前计时，已专注的时间仍计入合计。</li>
-      <li>到零后按设置提醒一次，并继续以负数显示超时时间，例如 −02:15 表示超时 2 分 15 秒。超时可以暂停或继续，也计入专注合计；每轮完成次数只记一次。</li>
-      <li>重置会清空已完成次数和专注合计，并将当前倒计时恢复到设定时长；停止只结束当前计时，保留统计。</li>
-      <li><kbd>空格</kbd> 开始／暂停／继续，<kbd>F</kbd> 全屏，<kbd>T</kbd> 夜间模式，<kbd>Shift</kbd> + <kbd>← / →</kbd> 切换模式。</li>
+      <li>归零前可暂停／继续或结束本轮；归零后可结束本轮，或进入下一阶段。按钮会写明进入短休息、长休息或专注；每完成 4 次专注后进入长休息。切换后需手动开始。</li>
+      <li>到零后按设置提醒一次，并继续以负数显示超时时间，例如 −02:15 表示超时 2 分 15 秒。超时也计入专注合计；每轮完成次数只记一次。</li>
+      <li>重置会清空已完成次数和专注合计，并将当前倒计时恢复到设定时长；结束本轮会结束当前计时并停止铃声，保留统计。进入下一阶段也会停止当前铃声。</li>
+      <li><kbd>空格</kbd> 开始／暂停／继续，归零后结束本轮；<kbd>F</kbd> 全屏，<kbd>T</kbd> 夜间模式，<kbd>Shift</kbd> + <kbd>← / →</kbd> 切换模式。</li>
       <li>设置、记录与计时状态保存在当前浏览器。关闭页面后不会响铃，重新打开会按截止时间恢复；设备休眠时无法保证准时发声。</li>
     </ul>
   </details>
@@ -318,7 +317,7 @@ class TimerEngine {
     showRecords: saved.prefs?.showRecords !== false
   };
   const names = { focusTime: '专注时间', shortBreak: '短休息', longBreak: '长休息' };
-  let audioContext, woodBuffer, alarmInterval, alarmTimeout, alarmActive = false, editor = null, dragState = null;
+  let audioContext, woodBuffer, alarmInterval, alarmTimeout, editor = null, dragState = null;
   const soundingNotes = new Set();
   function save() {
     try { localStorage.setItem(storageKey, JSON.stringify({ timer, prefs })); storageAvailable = true; }
@@ -358,16 +357,16 @@ class TimerEngine {
     }
   }
   function stopAlarm() {
-    clearInterval(alarmInterval); clearTimeout(alarmTimeout); alarmActive = false;
+    clearInterval(alarmInterval); clearTimeout(alarmTimeout);
     for (const note of soundingNotes) { try { note.stop(); } catch {} }
     soundingNotes.clear();
   }
   function alarm() {
     stopAlarm();
     if (prefs.volume > 0 && prefs.ringDuration > 0) {
-      alarmActive = true; beep();
+      beep();
       alarmInterval = setInterval(beep, 1100);
-      alarmTimeout = setTimeout(() => { stopAlarm(); render(); }, prefs.ringDuration * 1000);
+      alarmTimeout = setTimeout(stopAlarm, prefs.ringDuration * 1000);
     }
   }
   function tick() { if (timer.tick()) { alarm(); save(); } render(); }
@@ -378,6 +377,7 @@ class TimerEngine {
   function render() {
     const { minutes, seconds, negative } = timer.display();
     const expired = timer.remainingMs <= 0 && timer.status !== 'idle';
+    const nextLabel = timer.mode === 'focusTime' ? (timer.count > 0 && timer.count % 4 === 0 ? '进入长休息' : '进入短休息') : '进入专注';
     const timeLabel = `${minutes} 分 ${seconds} 秒`;
     const overtimeLabel = `已超时 ${formatTotal(Math.max(0, -timer.remainingMs))}`;
     $('timer-sign').hidden = !negative;
@@ -404,17 +404,19 @@ class TimerEngine {
     $('records').hidden = !prefs.showRecords;
     $('start').textContent = { idle: '开始', running: '暂停', paused: '继续' }[timer.status];
     $('start').className = 'action' + (timer.status === 'running' ? ' pause' : timer.status === 'paused' ? ' resume' : '');
+    $('start').hidden = expired;
     $('stop').hidden = !['running', 'paused'].includes(timer.status);
-    $('next').hidden = !['running', 'paused'].includes(timer.status);
-    $('next').textContent = timer.roundCompleted ? '完成' : '下一步';
-    $('silence').hidden = !alarmActive;
+    $('stop').className = expired ? 'action' : 'action secondary';
+    $('next').hidden = !expired;
+    $('next').textContent = nextLabel;
+    $('next').title = `${nextLabel}，等待手动开始`;
     $('theme').textContent = prefs.dark ? '日间模式' : '夜间模式';
     $('theme').setAttribute('aria-pressed', prefs.dark);
     $('duration-slider').value = expired ? 1 : Math.max(1, minutes);
     $('duration-slider').setAttribute('aria-valuetext', expired ? overtimeLabel : timeLabel);
     $('slider-label').textContent = expired ? '调整时长' : ['running', 'paused'].includes(timer.status) ? '剩余时长' : timer.mode === 'focusTime' ? '专注时长' : '休息时长';
     document.querySelectorAll('.preset').forEach(button => button.setAttribute('aria-pressed', !expired && minutes * 60 + seconds === Number(button.dataset.minutes) * 60));
-    let status = { idle: '准备好，开始一段' + names[timer.mode], running: expired ? `${overtimeLabel} · 可暂停或点击「完成」进入下一阶段` : names[timer.mode] + '进行中 · 调时将修改本轮剩余时间', paused: expired ? `已暂停 · ${overtimeLabel}` : '已暂停 · 调时将修改本轮剩余时间' }[timer.status];
+    let status = expired ? `${overtimeLabel} · 结束本轮或${nextLabel}` : { idle: '准备好，开始一段' + names[timer.mode], running: names[timer.mode] + '进行中 · 调时将修改本轮剩余时间', paused: '已暂停 · 调时将修改本轮剩余时间' }[timer.status];
     if (!storageAvailable) status += ' · 当前浏览器无法保存记录';
     if ($('status').textContent !== status) $('status').textContent = status;
   }
@@ -422,7 +424,10 @@ class TimerEngine {
   function toggleTimer() {
     unlockAudio();
     change(() => {
-      if (timer.status === 'running') timer.pause();
+      // Recheck the deadline before handling a click or Space at the zero boundary.
+      timer.tick();
+      if (timer.status !== 'idle' && timer.remainingMs <= 0) timer.reset();
+      else if (timer.status === 'running') timer.pause();
       else timer.start();
     });
   }
@@ -435,7 +440,6 @@ class TimerEngine {
   $('stop').addEventListener('click', () => change(() => timer.reset()));
   $('reset').addEventListener('click', () => change(() => timer.resetAll()));
   $('next').addEventListener('click', () => change(() => timer.next()));
-  $('silence').addEventListener('click', () => { stopAlarm(); render(); });
   $('add-minute').addEventListener('click', () => adjust(60));
   const switchMode = mode => { closeEditor(false); change(() => timer.switchMode(mode)); };
   document.querySelectorAll('.tab').forEach(tab => {
