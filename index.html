@@ -164,7 +164,7 @@
       <button class="small-button" id="fullscreen">全屏</button>
       <button class="small-button" id="theme" aria-pressed="false">夜间模式</button>
       <button class="small-button" id="add-minute">+01:00</button>
-      <button class="small-button" id="reset">重置</button>
+      <button class="small-button" id="reset" title="重置计时并清空专注记录">重置</button>
       <button class="small-button" id="settings" aria-haspopup="dialog">设置 ▾</button>
     </div>
   </section>
@@ -174,6 +174,7 @@
       <li>数字可点击编辑、上下拖动或滚轮调整，也可使用加减按钮、滑块及快捷时长。范围为 1 秒至 120 分钟。</li>
       <li>开始前修改会保存为该模式的默认时长；计时中或暂停时修改只改变本轮剩余时间。</li>
       <li>每完成 4 次专注，下一步进入长休息。切换模式会结束当前计时，已专注的时间仍计入合计。</li>
+      <li>重置会清空已完成次数和专注合计，并将当前倒计时恢复到设定时长；停止只结束当前计时，保留统计。</li>
       <li><kbd>空格</kbd> 开始／暂停／继续，<kbd>F</kbd> 全屏，<kbd>T</kbd> 夜间模式，<kbd>Shift</kbd> + <kbd>← / →</kbd> 切换模式。</li>
       <li>设置、记录与计时状态保存在当前浏览器。关闭页面后不会响铃，重新打开会按截止时间恢复；设备休眠时无法保证准时发声。</li>
     </ul>
@@ -248,6 +249,11 @@ class TimerEngine {
     this.totalMs = this.remainingMs;
     this.deadline = null;
     this.checkpoint = null;
+  }
+  resetAll(now = Date.now()) {
+    this.reset(now);
+    this.count = 0;
+    this.focusMs = 0;
   }
   switchMode(mode, now = Date.now()) {
     if (!TimerEngine.modes.includes(mode)) return;
@@ -391,7 +397,7 @@ class TimerEngine {
   $('duration-slider').addEventListener('input', event => setSeconds(Number(event.target.value) * 60));
   $('start').addEventListener('click', toggleTimer);
   $('stop').addEventListener('click', () => change(() => timer.reset()));
-  $('reset').addEventListener('click', () => change(() => timer.reset()));
+  $('reset').addEventListener('click', () => change(() => timer.resetAll()));
   $('next').addEventListener('click', () => change(() => timer.next()));
   $('silence').addEventListener('click', () => { stopAlarm(); render(); });
   $('add-minute').addEventListener('click', () => adjust(60));
